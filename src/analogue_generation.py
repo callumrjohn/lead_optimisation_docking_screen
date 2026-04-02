@@ -2,7 +2,7 @@ import pandas as pd
 from itertools import product
 from typing import Iterable, Tuple
 from rdkit import Chem
-from utils.config import load_config
+from src.utils.config import load_config
 
 def find_dummy_by_mapnum(mol: Chem.Mol, mapnum: int):
     """
@@ -176,3 +176,34 @@ def generate_combination_df(template: str,
     print(f"Generated {len(df)} molecules with {errors} errors.")
 
     return df
+
+def main():
+
+    config_path = input("Enter the path to the configuration file: ")
+    
+    config = load_config([config_path])
+
+    set_name = config.get("set_name", "analogue_set")
+    scaffold_smiles = config.get("scaffold_smiles")
+    substituent_dict = config.get("substituents", {})
+    
+    dummy_index_pairs = config.get("dummy_index_pairs", [])
+    combination_csv_path = config.get("csv_dir", "data/analogue_sets") + f"/{set_name}_combinations.csv"
+
+    # Calculate total combinations: multiply the number of options at each position
+    from functools import reduce
+    from operator import mul
+    num_combinations_per_position = [len(substituent_dict[i]) for i in sorted(substituent_dict.keys())]
+    number_of_combinations = reduce(mul, num_combinations_per_position, 1)
+
+    print("=" * 60)
+    print(f"Generating {number_of_combinations} analogue combinations for set: {set_name}")
+    print("=" * 60)
+
+    generate_combination_df(scaffold_smiles, 
+                            substituent_dict, 
+                            dummy_index_pairs, 
+                            combination_csv_path)
+    
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,55 @@
+
+set_name: "pap_derivatives"
+
+scaffold_smiles: "O=C([*:6])Nc1cc(Nc2nccc([*:4])n2)c([*:5])cc1" # Imatinib-like scaffold
+
+substituents: {
+  1:{
+  "phenyl": "[*:1]c1ccccc1",
+  "2-pyridyl": "[*:1]c1ccccn1",
+  "3-pyridyl": "[*:1]c1cccnc1",
+  "4-pyridyl": "[*:1]c1ccncc1",
+  "3-pyrrolyl": "[*:1]c1cc[nH]c1",
+  "imidazol-1-yl": "[*:1]n1ccnc1"
+  },
+
+  2:{
+    "ethyl": "[*:2]CC",
+    "isopropyl": "[*:2]C(C)C",
+    "cyclopropyl": "[*:2]C1CC1",
+    "cyclobutyl": "[*:2]C1CCC1",
+    "ethenyl": "[*:2]C=C",
+    "fluoro": "[*:2]F",
+    "chloro": "[*:2]Cl",
+    "bromo": "[*:2]Br",
+    "iodo": "[*:2]I",
+    "trifluoromethyl": "[*:2]C(F)(F)F",
+    "difluoromethyl": "[*:2]C(F)(F)",
+    "amido": "[*:2]NC(=O)C",
+    "carboxy": "[*:2]C(=O)O",
+    "dimethylamino": "[*:2]N(C)C",
+    "methylamino": "[*:2]NC",
+    "hydroxy": "[*:2]O",
+    "methoxy": "[*:2]OC",
+    "amino": "[*:2]N",
+    "cyano": "[*:2]C#N",
+    "thioether": "[*:2]SC",
+    "sulfoxide": "[*:2]S(=O)C",
+
+
+    },
+    3:{
+    "phenyl": "[*:3]c1ccccc1",
+    "4-methylphenyl": "[*:3]c1ccc(C)cc1",
+    "4-fluorophenyl": "[*:3]c1ccc(F)cc1",
+    "4-chlorophenyl": "[*:3]c1ccc(Cl)cc1",
+    "4-cyanophenyl": "[*:3]c1ccc(C#N)cc1",
+    "2-methoxyphenyl": "[*:3]c1c(OC)cccc1",
+    "2-carboxyphenyl": "[*:3]c1c(C(=O)O)cccc1",
+    "2-naphthyl": "[*:3]c1ccc2ccccc2c1"
+  }
+  }
+
+dummy_index_pairs: [[1, 4], [2, 5], [3, 6]]
+
+csv_dir: "data/analogue_sets"
