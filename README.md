@@ -88,7 +88,10 @@ substituents:
   3:
     "phenyl": "[*:3]c1ccccc1"
 
-dummy_index_pairs: [[1, 4], [2, 5], [3, 6]]
+dummy_index_pairs:
+  - [1, 4]
+  - [2, 5]
+  - [3, 6]
 
 csv_dir: "data/analogue_sets"
 ```
@@ -116,7 +119,6 @@ prepared_pdbqt = prepare_ligand(
     output_dir="data/prepared_ligands"
 )
 print(f"Prepared ligand: {prepared_pdbqt}")
-```
 ```
 
 ### 3. Calculate Binding Affinities
@@ -159,22 +161,6 @@ affinity = extract_top_binding("ligand_out.pdbqt")
 print(f"Top binding mode: {affinity}")
 ```
 
-## Workflow
-
-The pipeline...:
-
-```
-1. Define Scaffold + Substituents (YAML)
-   ↓
-2. Generate Analogues (all combinations)
-   ↓
-3. Prepare Ligands (SMILES → PDBQT)
-   ↓
-4. Dock with Vina (parallel processing)
-   ↓
-5. Extract Binding Affinities
-```
-
 ## Testing
 
 Run all tests:
@@ -191,9 +177,9 @@ pytest tests/test_analogue_generation.py -v
 
 ## Citation
 
-This work is based on the SAR campaign described in:
+> Inspiration: _Phenylamino-Pyrimidine (PAP) Derivatives: A New Class of Potent and Selective Inhibitors of Protein Kinase C (PKC)_, J. Zimmermann _et al_., 1996, DOI: 10.1002/ardp.19963290707
 
-> Original reference: _Phenylamino-Pyrimidine(PAP) Derivatives: A New Class of Potent andSelective Inhibitors of Protein Kinase C (PKC)_, J. Zimmermann _et al_., 1996, DOI: 10.1002/ardp.19963290707
+> Protein crystal structures: _*8UAK*_: _Crystal structure of the catalytic domain of human PKC alpha (D463N, V568I, S657E) in complex with Darovasertib (NVP-LXS196) at 2.82-A resolution_, *PDB DOI*: 10.2210/pdb8UAK/pdb, *Publication DOI*: 10.1021/acs.jmedchem.3c02002
 
 ## Status
 
