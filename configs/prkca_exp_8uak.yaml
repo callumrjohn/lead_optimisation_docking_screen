@@ -1,0 +1,7 @@
+receptor: data/prepared_proteins/prkca_exp_8uak_clean.pdbqt
+
+center: [31.2, -7.3, 12.7]
+
+size: [20.0, 20.0, 20.0]
+
+energy_range: 3
