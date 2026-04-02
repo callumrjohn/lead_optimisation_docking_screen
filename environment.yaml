@@ -1,0 +1,24 @@
+name: autodock-docking
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - rdkit
+  - numpy=1.24.4
+  - pandas
+  - scipy
+  - gemmi
+  - tqdm
+  - prody
+  - swig
+  - boost-cpp
+  - libboost
+  - sphinx
+  - sphinx_rtd_theme
+ # - vina # Unix-based systems only; for Windows, install AutoDock Vina separately and add it to PATH
+  - pytest
+  - pyyaml   
+  - pip
+  - pip:
+    - meeko
