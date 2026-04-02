@@ -1,4 +1,4 @@
-name: autodock-docking
+name: lead_optimisation_docking_screen
 channels:
   - conda-forge
   - defaults
