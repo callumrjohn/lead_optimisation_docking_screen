@@ -93,7 +93,7 @@ class TestMolToPdbqt:
             
             # Check the command
             call_args = mock_run.call_args
-            assert call_args[0][0][0] == "mk_prepare_ligand"
+            assert call_args[0][0][0].endswith("mk_prepare_ligand.exe") or call_args[0][0][0].endswith("mk_prepare_ligand")
             assert "-i" in call_args[0][0]
             assert "-o" in call_args[0][0]
     
@@ -140,7 +140,7 @@ class TestMolToPdbqt:
             
             # Verify command structure
             call_args = mock_run.call_args[0][0]
-            assert call_args[0] == "mk_prepare_ligand"
+            assert call_args[0].endswith("mk_prepare_ligand.exe") or call_args[0].endswith("mk_prepare_ligand")
             assert call_args[1] == "-i"
             assert str(mol_path) in call_args
             assert call_args[-2] == "-o"
