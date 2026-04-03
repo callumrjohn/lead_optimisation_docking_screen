@@ -1,4 +1,5 @@
 import yaml
+from typing import Union
 
 def deep_update(orig: dict, new: dict):
 
@@ -16,17 +17,20 @@ def deep_update(orig: dict, new: dict):
         else:
             orig[key] = val
 
-def load_config(files):
+def load_config(files: Union[str, list]) -> dict:
     
     """
     Load YAML configuration files and merge into a single dictionary.
 
     Args:
-        files (list): List of file paths to YAML configuration files.
+        files: File or list of file paths to YAML configuration files.
     
     Returns:
         dict: Merged configuration dictionary
     """
+
+    if isinstance(files, str):
+        files = [files]
 
     config = {}
     for file in files:
