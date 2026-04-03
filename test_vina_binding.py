@@ -1,6 +1,6 @@
 """Test the updated VinaCalculator class."""
 
-from vina_binding import VinaCalculator
+from src.vina_binding import VinaCalculator
 
 # Test parameters
 protein = "data/prepared_proteins/prkca_exp_8uak_clean.pdbqt"

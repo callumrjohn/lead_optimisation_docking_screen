@@ -2,7 +2,7 @@
 
 import time
 from multiprocessing import freeze_support
-from vina_binding import VinaCalculator
+from src.vina_binding import VinaCalculator
 
 
 def main():
