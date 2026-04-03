@@ -4,21 +4,20 @@ Calculates binding affinity between a ligand (SMILES) and a protein (PDB).
 Uses Meeko for ligand preparation and AutoDock Vina for docking.
 """
 
-import os
 import platform
 import re
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
-from typing import Optional, Dict, Tuple, List
+from typing import Optional, Dict, Tuple
 from multiprocessing import Pool, cpu_count, freeze_support
 import logging
 
-from rdkit import Chem
-from rdkit.Chem import AllChem
-from meeko import MoleculePreparation
-from meeko import PDBQTWriterLegacy
+# Add parent directory to Python path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from src.utils.config import load_config
+from src.ligand_preparation import prepare_ligand
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -45,8 +44,12 @@ class VinaCalculator:
     """Calculate protein-ligand binding affinity using AutoDock Vina."""
     
     def __init__(self, protein_pdbqt: str, center: Tuple[float, float, float], 
-                 size: Tuple[float, float, float] = (20, 20, 20), 
-                 exhaustiveness: int = 8, num_modes: int = 9):
+                 size: Tuple[float, float, float] = (20, 20, 20),
+                 cpus: Optional[int] = 0,
+                 exhaustiveness: Optional[int] = 8, max_evals: Optional[int] = 0,
+                 random_seed: Optional[int] = 42, num_modes: Optional[int] = 9,
+                 min_rmsd: Optional[float] = 1.0, energy_range: Optional[float] = 3.0,
+                 spacing: Optional[float] = 0.375, verbosity: Optional[int] = 1):
         """
         Initialize the AutoDock calculator.
         
@@ -55,14 +58,24 @@ class VinaCalculator:
             center: Docking center coordinates (x, y, z)
             size: Docking box size (x, y, z) in Angstroms
             exhaustiveness: Exhaustiveness parameter for Vina (higher = more thorough)
+            max_evals: Maximum number of evaluations for Vina
             num_modes: Number of binding modes to generate
+            energy_range: Range of energies to consider for binding modes
         """
         self.protein_pdbqt = str(protein_pdbqt)
+        self.protein_name = Path(protein_pdbqt).stem
         self.center = center
         self.size = size
+        self.cpus = cpus
         self.exhaustiveness = exhaustiveness
+        self.max_evals = max_evals
+        self.random_seed = random_seed
         self.num_modes = num_modes
-        
+        self.min_rmsd = min_rmsd
+        self.energy_range = energy_range
+        self.spacing = spacing
+        self.verbosity = verbosity
+
         if not Path(self.protein_pdbqt).exists():
             raise FileNotFoundError(f"Protein PDBQT not found: {self.protein_pdbqt}")
         
@@ -91,7 +104,13 @@ class VinaCalculator:
             "--size_y", str(self.size[1]),
             "--size_z", str(self.size[2]),
             "--exhaustiveness", str(self.exhaustiveness),
+            "--max_evals", str(self.max_evals),
+            "--seed", str(self.random_seed),
             "--num_modes", str(self.num_modes),
+            "--min_rmsd", str(self.min_rmsd),
+            "--energy_range", str(self.energy_range),
+            "--spacing", str(self.spacing),
+            "--verbosity", str(self.verbosity),
             "--out", output_pdbqt,
         ]
         
@@ -141,7 +160,7 @@ class VinaCalculator:
             }
         
         # Create output path
-        output_pdbqt = ligand_pdbqt_path.parent / f"{ligand_pdbqt_path.stem}_out.pdbqt"
+        output_pdbqt = ligand_pdbqt_path.parent / f"{ligand_pdbqt_path.stem}_{self.protein_name}.pdbqt"
         
         try:
             # Run docking
@@ -276,47 +295,50 @@ class VinaCalculator:
 
 
 def main():
-    """Example usage of VinaCalculator with multiprocessing."""
+    """VinaCalculator usage to calculate binding affinity for a single ligand and protein."""
+
     
-    # Example parameters
-    protein_pdbqt = "data/prepared_proteins/prkca_exp_8uak_clean.pdbqt"
-    center = (31.2, -7.3, 12.7)
-    size = (20.0, 20.0, 20.0)
+    protein_config_path = input("Enter path to protein config YAML: ")
+    ligand = input("Enter path to ligand PDBQT or SMILES string of ligand: ")
+
+    vina_config = load_config("configs/vina_binding.yaml")["simulation_parameters"]
+    protein_config = load_config(protein_config_path)
+
+    remove_pdbqt = False # Flag to track if we need to clean up a prepared PDBQT file after docking
+
+    if ligand.endswith(".pdbqt"):
+        ligand_path = ligand
     
-    # Initialize calculator
-    try:
-        calculator = VinaCalculator(
-            protein_pdbqt=protein_pdbqt,
-            center=center,
-            size=size,
-            exhaustiveness=8,
-            num_modes=9
-        )
-        
-        # Single ligand docking
-        ligand_path = "data/prepared_ligands/imatinib.pdbqt"
-        print("Single ligand docking...")
-        result = calculator.calculate_binding(ligand_path, name="imatinib")
-        print(f"Result: {result['name']} - {result['affinity']:.2f} kcal/mol\n")
-        
-        # Multiple ligands docking (parallel)
-        print("Multiple ligands docking (parallel)...")
-        ligands = {
-            "ligand_1": "data/prepared_ligands/imatinib.pdbqt",
-            "ligand_2": "data/prepared_ligands/imatinib.pdbqt",  # Same for demo
-            "ligand_3": "data/prepared_ligands/imatinib.pdbqt",
-        }
-        
-        results = calculator.dock_multiple(ligands, use_multiprocessing=True, num_processes=2)
-        print("\nDocking results:")
-        for name, result in results.items():
-            if result["success"]:
-                print(f"  {name}: {result['affinity']:.2f} kcal/mol")
-            else:
-                print(f"  {name}: Failed - {result['message']}")
-                
-    except FileNotFoundError as e:
-        print(f"Error: {e}")
+    else:        # Assume it's a SMILES string and prepare ligand
+        ligand_path = prepare_ligand(ligand, output_dir="prepared_ligands")
+        remove_pdbqt = True  # Mark for cleanup after docking
+        if ligand_path is None:
+            print("Failed to prepare ligand. Enter a valid PDBQT file or SMILES string.")
+            return
+    
+    calculator = VinaCalculator(
+        protein_pdbqt=protein_config["receptor"],
+        center=tuple(protein_config["center"]),
+        size=tuple(protein_config["size"]),
+        cpus=vina_config.get("cpu", 0),
+        exhaustiveness=vina_config.get("exhaustiveness", 8),
+        max_evals=vina_config.get("max_evals", 0),
+        random_seed=vina_config.get("seed", 42),
+        num_modes=vina_config.get("num_modes", 9),
+        min_rmsd=vina_config.get("min_rmsd", 1.0),
+        energy_range=vina_config.get("energy_range", 3.0),
+        spacing=vina_config.get("spacing", 0.375),
+        verbosity=vina_config.get("verbosity", 1)
+    )
+
+    results = calculator.calculate_binding(ligand_path, name=Path(ligand_path).stem)
+
+    print(results['message'])
+    print(f"Output saveed to: {results.get('output_pdbqt', 'N/A')}")
+
+    # Remove prepared PDBQT file if it was created from SMILES input
+    if remove_pdbqt:
+        Path.unlink(ligand_path)  # Clean up prepared ligand file after docking
 
 
 if __name__ == "__main__":

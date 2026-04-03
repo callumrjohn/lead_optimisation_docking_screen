@@ -1,0 +1,10 @@
+simulation_parameters:
+  cpu: 0
+  exhaustiveness: 8
+  max_evals: 0
+  seed: 42
+  num_modes: 9
+  min_rmsd: 1.0
+  energy_range: 3.0
+  spacing: 0.375
+  verbosity: 1
