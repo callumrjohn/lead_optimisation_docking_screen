@@ -20,5 +20,8 @@ dependencies:
   - pytest
   - pyyaml   
   - pip
+  - pytorch::pytorch
+  - pytorch::pytorch-cuda
   - pip:
     - meeko
+    - gpytorch

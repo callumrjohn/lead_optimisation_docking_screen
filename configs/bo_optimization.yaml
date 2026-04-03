@@ -1,0 +1,24 @@
+# Bayesian Optimization Configuration
+# This file defines the BO parameters and protein configurations
+
+# Protein configurations
+proteins:
+  target: configs/epfr_exp_3w2s.yaml
+  off_targets:
+    - configs/prkca_exp_8uak.yaml
+
+# Input data
+input:
+  smiles_csv: data/analogue_sets/pap_derivatives_combinations.csv
+
+# Optimization parameters
+optimization:
+  total_budget: 6           # Total number of ligands to evaluate
+  initial_sample_size: 2    # Number of initial compounds from MaxMin sampling
+  batch_size: 2             # Number of compounds to select per BO iteration
+  target_weight: 0.5        # Weight for target binding affinity in composite objective
+  selectivity_weight: 0.5   # Weight for selectivity in composite objective
+
+# Output
+output:
+  results_csv: bo_results.csv
