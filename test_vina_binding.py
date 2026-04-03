@@ -1,5 +1,11 @@
 """Test the updated VinaCalculator class."""
 
+import sys
+from pathlib import Path
+
+# Add parent directory to Python path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from src.vina_binding import VinaCalculator
 
 # Test parameters

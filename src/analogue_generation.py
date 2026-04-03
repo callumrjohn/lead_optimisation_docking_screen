@@ -1,7 +1,13 @@
+import sys
 import pandas as pd
 from itertools import product
 from typing import Iterable, Tuple
+from pathlib import Path
 from rdkit import Chem
+
+# Add parent directory to Python path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from src.utils.config import load_config
 
 def find_dummy_by_mapnum(mol: Chem.Mol, mapnum: int):
@@ -23,7 +29,6 @@ def find_dummy_by_mapnum(mol: Chem.Mol, mapnum: int):
 
 
 def get_number_of_dummy_atoms(mol: Chem.Mol) -> int:
-
     """
     Count the number of dummy atoms (atomic number 0) in a molecule.
     
@@ -41,7 +46,6 @@ def get_number_of_dummy_atoms(mol: Chem.Mol) -> int:
     return count
 
 def pool_substituents(scaffold: Chem.Mol, substituents) -> Chem.Mol:
-
     """
     Combine scaffold + substituents without connecting or removing dummy atoms for further processing.
     The number of substituents must match the number of dummy atoms in the scaffold, and each substituent must have exactly one dummy atom.
@@ -133,7 +137,6 @@ def generate_combination_df(template: str,
                             dummy_index_pairs: Iterable[Tuple[int, int]],
                             combination_csv_path: str = "data/generated_analogues.csv"
                             ) -> pd.DataFrame:
-
     """
     Generate all combinations of substituents on a given scaffold template.
     

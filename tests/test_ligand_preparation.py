@@ -3,11 +3,16 @@ Unit tests for ligand_preparation module.
 Tests SMILES to MOL conversion and MOL to PDBQT conversion.
 """
 
+import os
+import sys
 import pytest
 import tempfile
+import subprocess
 from pathlib import Path
 from unittest.mock import patch, MagicMock
-import subprocess
+
+# Add parent directory to Python path
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.ligand_preparation import smiles_to_mol, mol_to_pdbqt
 
@@ -28,7 +33,6 @@ class TestSmilesToMol:
     def test_default_output_path(self):
         """Test that default output path is created."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            import os
             old_cwd = os.getcwd()
             try:
                 os.chdir(tmpdir)

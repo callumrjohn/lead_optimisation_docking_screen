@@ -1,7 +1,13 @@
 """Test multiprocessing with VinaCalculator."""
 
+import sys
 import time
+from pathlib import Path
 from multiprocessing import freeze_support
+
+# Add parent directory to Python path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from src.vina_binding import VinaCalculator
 
 
