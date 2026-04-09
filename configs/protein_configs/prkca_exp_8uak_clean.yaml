@@ -1,0 +1,13 @@
+# Docking configuration
+# Update 'center' coordinates based on your target binding site
+# You can use PyMOL, Chimera, or other tools to identify these
+
+receptor: data\prepared_proteins\prkca_exp_8uak_clean.pdbqt
+center:
+- 31.2
+- -7.3
+- 12.7
+size:
+- 20
+- 20
+- 20
