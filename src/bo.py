@@ -9,15 +9,17 @@ from pathlib import Path
 from typing import Dict, Tuple, List, Optional
 import numpy as np
 import pandas as pd
-import torch
 import csv
 import tempfile
+from scipy.stats import norm
+import torch
+import gpytorch
 
 from rdkit import Chem
 from rdkit.Chem import AllChem, DataStructs
 from rdkit.Chem import rdFingerprintGenerator
 from rdkit.SimDivFilters import MaxMinPicker
-import gpytorch
+from gauche.kernels.fingerprint_kernels.tanimoto_kernel import TanimotoKernel
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -199,7 +201,7 @@ class BayesianOptimizer:
         """
         return self.target_weight * (-target_affinity) + self.selectivity_weight * selectivity
     
-    def evaluate_ligand(self, smiles: str, ligand_name: str = "ligand", iteration_index: int = 0) -> Dict:
+    def evaluate_ligand(self, smiles: str, ligand_name: str = "ligand", iteration_index: int = 0, save_pdbqt: bool = False) -> Dict:
         """
         Evaluate a single ligand.
         
@@ -207,6 +209,7 @@ class BayesianOptimizer:
             smiles: SMILES string
             ligand_name: Name for output files
             iteration_index: Which BO iteration this ligand is from (0 = initial batch)
+            save_pdbqt: Whether to save the output PDBQT file
             
         Returns:
             Dictionary with results
@@ -218,7 +221,7 @@ class BayesianOptimizer:
             pdbqt_path = prepare_ligand(smiles, name=ligand_name, output_dir="data/prepared_ligands")
             
             # Target docking
-            target_result = self.target_calc.calculate_binding(pdbqt_path, name=ligand_name)
+            target_result = self.target_calc.calculate_binding(pdbqt_path, name=ligand_name, save_pdbqt=save_pdbqt)
             if not target_result["success"]:
                 logger.warning(f"Target binding failed for {ligand_name}")
                 return {"success": False}
@@ -267,19 +270,20 @@ class BayesianOptimizer:
             logger.error(f"Error evaluating {ligand_name}: {e}")
             return {"success": False}
     
-    def evaluate_batch(self, smiles_list: List[str], iteration_index: int = 0) -> None:
+    def evaluate_batch(self, smiles_list: List[str], iteration_index: int = 0, save_pdbqt: bool = False) -> None:
         """Evaluate a batch of SMILES
         
         Args:
             smiles_list: List of SMILES to evaluate
             iteration_index: Which BO iteration this batch is from
+            save_pdbqt: Whether to save the output PDBQT files
         """
         for i, smiles in enumerate(smiles_list):
-            self.evaluate_ligand(smiles, ligand_name=f"ligand_{len(self.smiles_list)}", iteration_index=iteration_index)
+            self.evaluate_ligand(smiles, ligand_name=f"ligand_{len(self.smiles_list)}", iteration_index=iteration_index, save_pdbqt=save_pdbqt)
     
     def fit_gpr_models(self) -> Tuple[gpytorch.models.ExactGP, gpytorch.models.ExactGP]:
         """
-        Fit Gaussian Process models for target affinity and selectivity using Tanimoto kernel.
+        Fit Gaussian Process models for target affinity and selectivity using Gauche Tanimoto kernel.
         
         Returns:
             Tuple of (target_model, selectivity_model)
@@ -295,48 +299,36 @@ class BayesianOptimizer:
             logger.error(f"Failed to generate fingerprints: {e}", exc_info=True)
             raise
         
-        # Compute Tanimoto kernel matrix manually
-        try:
-            logger.info("Computing Tanimoto kernel matrix...")
-            K = self._compute_tanimoto_kernel_matrix(self.fingerprints)
-            logger.info(f"Kernel matrix shape: {K.shape}, min={K.min():.3f}, max={K.max():.3f}")
-        except Exception as e:
-            logger.error(f"Failed to compute kernel matrix: {e}", exc_info=True)
-            raise
+        # Convert fingerprints to torch tensors
+        X_train = torch.tensor(self.fingerprints, dtype=torch.float32)
         
-        # Convert observations to tensors
-        y_target = torch.tensor(
-            [[-a for a in self.target_affinities]],  # Negative for maximization
-            dtype=torch.float32
-        )
-        y_selectivity = torch.tensor(
-            [[s for s in self.selectivity_scores]],
-            dtype=torch.float32
-        )
+        # Convert observations to torch tensors
+        y_target = torch.tensor([-a for a in self.target_affinities], dtype=torch.float32)  # Negative for maximization
+        y_selectivity = torch.tensor([s for s in self.selectivity_scores], dtype=torch.float32)
+        
         logger.info(f"Target affinity range: {min(self.target_affinities):.2f} to {max(self.target_affinities):.2f}")
         logger.info(f"Selectivity range: {min(self.selectivity_scores):.2f} to {max(self.selectivity_scores):.2f}")
         
-        # Fit models
-        logger.info("Fitting GPR models...")
-        
-        class KernelGP(gpytorch.models.ExactGP):
-            def __init__(self, train_K, train_y, likelihood):
-                super().__init__(train_K, train_y, likelihood)
+        # Define GP class with Tanimoto kernel
+        class TanimotoExactGP(gpytorch.models.ExactGP):
+            def __init__(self, train_x, train_y, likelihood):
+                super().__init__(train_x, train_y, likelihood)
                 self.mean_module = gpytorch.means.ConstantMean()
-                self.covar_module = gpytorch.kernels.ScaleKernel(
-                    gpytorch.kernels.MaternKernel()
-                )
+                self.covar_module = gpytorch.kernels.ScaleKernel(TanimotoKernel())
             
             def forward(self, x):
                 mean_x = self.mean_module(x)
                 covar_x = self.covar_module(x)
                 return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
         
-        # Target model
+        # Fit models with Tanimoto kernel
+        logger.info("Fitting GPR models with Tanimoto kernel...")
+        
+        # Target affinity model
         try:
             logger.info("Fitting target affinity model...")
             likelihood_target = gpytorch.likelihoods.GaussianLikelihood()
-            model_target = KernelGP(K, y_target.T.squeeze(), likelihood_target)
+            model_target = TanimotoExactGP(X_train, y_target, likelihood_target)
             self._fit_gp_model(model_target, likelihood_target)
             logger.info("Target affinity model fitted successfully")
         except Exception as e:
@@ -347,7 +339,7 @@ class BayesianOptimizer:
         try:
             logger.info("Fitting selectivity model...")
             likelihood_selectivity = gpytorch.likelihoods.GaussianLikelihood()
-            model_selectivity = KernelGP(K, y_selectivity.T.squeeze(), likelihood_selectivity)
+            model_selectivity = TanimotoExactGP(X_train, y_selectivity, likelihood_selectivity)
             self._fit_gp_model(model_selectivity, likelihood_selectivity)
             logger.info("Selectivity model fitted successfully")
         except Exception as e:
@@ -356,101 +348,6 @@ class BayesianOptimizer:
         
         return model_target, model_selectivity
     
-    @staticmethod
-    def _compute_tanimoto_kernel_matrix(fingerprints: np.ndarray) -> torch.Tensor:
-        """
-        Compute Tanimoto kernel matrix from fingerprints.
-        
-        Args:
-            fingerprints: Array of fingerprints (n_samples, n_features)
-            
-        Returns:
-            Tanimoto kernel matrix as torch tensor
-        """
-        n = len(fingerprints)
-        K = np.zeros((n, n))
-        
-        # Convert to RDKit format
-        fps_rdk = [DataStructs.ExplicitBitVect(2048) for _ in range(n)]
-        for i, fp in enumerate(fingerprints):
-            on_bits = np.flatnonzero(fp)
-            for b in on_bits:
-                fps_rdk[i].SetBit(int(b))
-        
-        # Compute pairwise Tanimoto similarities
-        for i in range(n):
-            similarities = DataStructs.BulkTanimotoSimilarity(fps_rdk[i], fps_rdk)
-            K[i, :] = similarities
-        
-        return torch.tensor(K, dtype=torch.float32)
-    
-    @staticmethod
-    def _compute_cross_kernel_matrix(fingerprints_1: np.ndarray, fingerprints_2: np.ndarray) -> torch.Tensor:
-        """
-        Compute cross Tanimoto kernel matrix between two sets of fingerprints.
-        
-        Args:
-            fingerprints_1: Array of fingerprints (n_samples_1, n_features)
-            fingerprints_2: Array of fingerprints (n_samples_2, n_features)
-            
-        Returns:
-            Cross kernel matrix shape (n_samples_1, n_samples_2) as torch tensor
-        """
-        n1 = len(fingerprints_1)
-        n2 = len(fingerprints_2)
-        K = np.zeros((n1, n2))
-        
-        # Convert to RDKit format
-        fps_rdk_1 = [DataStructs.ExplicitBitVect(2048) for _ in range(n1)]
-        for i, fp in enumerate(fingerprints_1):
-            on_bits = np.flatnonzero(fp)
-            for b in on_bits:
-                fps_rdk_1[i].SetBit(int(b))
-        
-        fps_rdk_2 = [DataStructs.ExplicitBitVect(2048) for _ in range(n2)]
-        for i, fp in enumerate(fingerprints_2):
-            on_bits = np.flatnonzero(fp)
-            for b in on_bits:
-                fps_rdk_2[i].SetBit(int(b))
-        
-        # Compute cross Tanimoto similarities
-        for i in range(n1):
-            similarities = DataStructs.BulkTanimotoSimilarity(fps_rdk_1[i], fps_rdk_2)
-            K[i, :] = similarities
-        
-        return torch.tensor(K, dtype=torch.float32)
-    
-    def _fit_gp_model(
-        self,
-        model: gpytorch.models.ExactGP,
-        likelihood: gpytorch.likelihoods.Likelihood,
-        n_iterations: int = 50,
-    ) -> None:
-        """
-        Fit a GP model using Adam optimizer.
-        
-        Args:
-            model: GP model to fit
-            likelihood: Likelihood function
-            n_iterations: Number of optimization iterations
-        """
-        import torch.optim
-        
-        model.train()
-        likelihood.train()
-        
-        optimizer = torch.optim.Adam(model.parameters(), lr=0.1)
-        mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
-        
-        for iter in range(n_iterations):
-            optimizer.zero_grad()
-            output = model(model.train_inputs[0])
-            loss = -mll(output, model.train_targets)
-            loss.backward()
-            optimizer.step()
-        
-        model.eval()
-        likelihood.eval()
     
     def select_batch_with_diversity(
         self,
@@ -480,10 +377,6 @@ class BayesianOptimizer:
         # Generate fingerprints for candidates
         candidate_array, candidate_fps = fps_from_smiles(pd.Series(candidate_smiles))
         
-        # Compute cross-kernel matrix: candidates vs training set (for predictions)
-        logger.info("Computing Tanimoto similarities between candidates and training set...")
-        K_candidates_vs_train = self._compute_cross_kernel_matrix(candidate_fps, self.fingerprints)
-        
         # Convert to RDKit format for diversity penalty
         candidate_fps_rdk = [DataStructs.ExplicitBitVect(2048) for _ in range(len(candidate_fps))]
         for i, fp in enumerate(candidate_fps):
@@ -497,13 +390,13 @@ class BayesianOptimizer:
             for b in on_bits:
                 evaluated_fps_rdk[i].SetBit(int(b))
         
-        # Compute EI for target affinity
+        # Compute EI for target affinity using Gauche predictions
         logger.info("Computing Expected Improvement for target affinity...")
-        ei_target = self._compute_ei_batch(K_candidates_vs_train, model_target, self.target_affinities)
+        ei_target = self._compute_ei_batch(candidate_fps, model_target, self.target_affinities)
         
-        # Compute EI for selectivity
+        # Compute EI for selectivity using Gauche predictions
         logger.info("Computing Expected Improvement for selectivity...")
-        ei_selectivity = self._compute_ei_batch(K_candidates_vs_train, model_selectivity, self.selectivity_scores)
+        ei_selectivity = self._compute_ei_batch(candidate_fps, model_selectivity, self.selectivity_scores)
         
         # Normalize EI scores to [0, 1]
         ei_target = (ei_target - ei_target.min()) / (ei_target.max() - ei_target.min() + 1e-8)
@@ -543,66 +436,51 @@ class BayesianOptimizer:
     
     def _compute_ei_batch(
         self,
-        K_candidates: torch.Tensor,
+        candidate_fps: np.ndarray,
         model: gpytorch.models.ExactGP,
         observations: List[float],
     ) -> np.ndarray:
         """
-        Compute Expected Improvement (EI) for batch of candidates using kernel ridge regression.
+        Compute Expected Improvement (EI) for batch of candidates using GP predictions.
         
         Args:
-            K_candidates: Tanimoto kernel matrix between candidates and evaluated compounds
-                         Shape: (n_candidates, n_evaluated)
-            model: Fitted GP model (used to extract kernel hyperparameters)
+            candidate_fps: Fingerprints of candidate molecules (n_candidates, n_features)
+            model: Fitted GP model (GPyTorch ExactGP with Tanimoto kernel)
             observations: Observations used to fit the model
             
         Returns:
             Array of EI scores for each candidate
         """
-        # Get the training kernel matrix from the observations
-        K_train = self._compute_tanimoto_kernel_matrix(self.fingerprints)
+        # Convert fingerprints to torch tensor
+        X_test = torch.tensor(candidate_fps, dtype=torch.float32)
         
-        # Regularization parameter (from model likelihood noise)
-        noise_var = model.likelihood.noise_covar.noise.item() if hasattr(model.likelihood, 'noise_covar') else 1e-4
-        
-        # Add regularization to diagonal
-        K_train_reg = K_train.numpy() + np.eye(len(observations)) * noise_var
-        
-        # Solve for alpha: (K_train + λI)^-1 @ y
-        y = np.array(observations, dtype=np.float32).reshape(-1, 1)
-        try:
-            alpha = np.linalg.solve(K_train_reg, y)
-        except np.linalg.LinAlgError:
-            logger.warning("Kernel matrix is singular, using pseudoinverse")
-            alpha = np.linalg.pinv(K_train_reg) @ y
+        # Use model for predictions
+        model.eval()
+        with torch.no_grad():
+            try:
+                # Get predictions from model
+                predictions = model.likelihood(model(X_test))
+                mean_predictions = predictions.mean.numpy()
+                variance_predictions = predictions.variance.numpy()
+            except Exception as e:
+                logger.warning(f"GP prediction failed: {e}. Using fallback.")
+                return np.zeros(len(candidate_fps))
         
         # Get current best observation
         best_observation = np.max(observations)
         
         ei_scores = []
-        K_cand = K_candidates.numpy() if isinstance(K_candidates, torch.Tensor) else K_candidates
         
-        # Predict for each candidate
-        for i in range(K_cand.shape[0]):
-            k_cand = K_cand[i:i+1, :]  # Shape: (1, n_evaluated)
+        # Compute EI for each candidate
+        for i in range(len(candidate_fps)):
+            mean = mean_predictions[i]
+            variance = max(variance_predictions[i], 1e-8)
+            std = np.sqrt(variance)
             
-            # Mean prediction: k(x*, X) @ alpha
-            mean = (k_cand @ alpha).item()
-            
-            # Variance prediction (simplified): k(x*, x*) - k(x*, X) @ K^-1 @ k(X, x*)
-            # k(x*, x*) = 1 for normalized tanimoto
-            k_self = 1.0  # Tanimoto similarity of a molecule with itself
-            try:
-                var = k_self - (k_cand @ np.linalg.solve(K_train_reg, k_cand.T)).item()
-            except:
-                var = k_self  # Fallback
-            
-            std = np.sqrt(max(var, 1e-8))
-            
-            # Expected Improvement
+            # Expected Improvement formula
             if std > 1e-8:
                 Z = (mean - best_observation) / std
-                ei = (mean - best_observation) * self._normal_cdf(Z) + std * self._normal_pdf(Z)
+                ei = (mean - best_observation) * norm.cdf(Z) + std * norm.pdf(Z)
             else:
                 ei = max(0, mean - best_observation)
             
@@ -610,15 +488,35 @@ class BayesianOptimizer:
         
         return np.array(ei_scores)
     
-    @staticmethod
-    def _normal_pdf(x: float) -> float:
-        """Standard normal PDF"""
-        return np.exp(-0.5 * x**2) / np.sqrt(2 * np.pi)
-    
-    @staticmethod
-    def _normal_cdf(x: float) -> float:
-        """Standard normal CDF"""
-        return (1.0 + np.tanh(x / np.sqrt(2)) * np.sqrt(2 / np.pi)) / 2.0
+    def _fit_gp_model(
+        self,
+        model: gpytorch.models.ExactGP,
+        likelihood: gpytorch.likelihoods.Likelihood,
+        n_iterations: int = 50,
+    ) -> None:
+        """
+        Fit a GP model using Adam optimizer.
+        
+        Args:
+            model: GP model to fit
+            likelihood: Likelihood function
+            n_iterations: Number of optimization iterations
+        """
+        model.train()
+        likelihood.train()
+        
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.1)
+        mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
+        
+        for iter in range(n_iterations):
+            optimizer.zero_grad()
+            output = model(model.train_inputs[0])
+            loss = -mll(output, model.train_targets)
+            loss.backward()
+            optimizer.step()
+        
+        model.eval()
+        likelihood.eval()
     
     def run_optimization_loop(
         self,
@@ -626,6 +524,7 @@ class BayesianOptimizer:
         initial_sample_size: int = 5,
         total_budget: int = 50,
         batch_size: int = 5,
+        save_pdbqt: bool = False,
     ) -> pd.DataFrame:
         """
         Run the full BO optimization loop.
@@ -635,7 +534,7 @@ class BayesianOptimizer:
             initial_sample_size: Initial set size from MaxMin sampling
             total_budget: Total evaluations allowed
             batch_size: Batch size per iteration
-            
+            save_pdbqt: Whether to save the output PDBQT files
         Returns:
             DataFrame of results ranked by composite score
         """
@@ -652,7 +551,7 @@ class BayesianOptimizer:
         
         # Evaluate initial batch
         logger.info(f"Evaluating initial batch of {len(initial_subset)}")
-        self.evaluate_batch(initial_subset.tolist(), iteration_index=0)
+        self.evaluate_batch(initial_subset.tolist(), iteration_index=0, save_pdbqt=save_pdbqt)
         
         n_iterations = (total_budget - len(self.smiles_list)) // batch_size
         
@@ -696,7 +595,7 @@ class BayesianOptimizer:
             
             # Evaluate
             logger.info(f"Evaluating batch of {len(next_batch)}")
-            self.evaluate_batch(next_batch, iteration_index=iteration+1)
+            self.evaluate_batch(next_batch, iteration_index=iteration+1, save_pdbqt=save_pdbqt)
         
         logger.info("\n=== Optimization Complete ===")
         return self.get_results_dataframe()
@@ -748,6 +647,7 @@ def main(config_file: str = "configs/bo_optimization.yaml"):
     # Extract output parameters
     output_config = config["output"]
     output_csv = output_config["results_csv"]
+    save_pdbqt = output_config.get("save_pdbqt", False)
     
     logger.info(
         f"BO Configuration:\n"
@@ -772,6 +672,7 @@ def main(config_file: str = "configs/bo_optimization.yaml"):
         initial_sample_size=initial_sample_size,
         total_budget=budget,
         batch_size=batch_size,
+        save_pdbqt=save_pdbqt
     )
     
     print("\n=== Top Results ===")
@@ -779,7 +680,6 @@ def main(config_file: str = "configs/bo_optimization.yaml"):
     
     results.to_csv(output_csv, index=False)
     logger.info(f"Results saved to {output_csv}")
-
 
 if __name__ == "__main__":
     main()
