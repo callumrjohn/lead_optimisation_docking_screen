@@ -1,11 +1,11 @@
 # Lead-optimisation Docking Screen
 
-Computational workflow for AutoDock Vina binding simulations and multi-objective Bayesian optimization for target binding and off-target selectivity.
+Computational workflow for AutoDock Vina binding simulations and multi-objective Bayesian optimisation for target binding and off-target selectivity.
 
-This project provides tools for **analogue generation**, **ligand & protein preparation**, **binding affinity calculations**, and **multi-objective Bayesian optimization** with parallel processing support.
+This project provides tools for **analogue generation**, **ligand & protein preparation**, **binding affinity calculations**, and **multi-objective Bayesian optimisation** with parallel processing support.
 
 
-> 💡 Built as a fun personal project to explore using some open-source tools in the context of lead-optimisation.
+> 💡 Built as a fun personal project to explore using some open-source tools in the context of drug sicovery.
 
 
 ## Overview
@@ -14,7 +14,7 @@ This repository provides a complete workflow for computational drug discovery:
 - **Analogue generation**: Systematic creation of compound variants through scaffold-based substitution (YAML-configured)
 - **Ligand preparation**: Prepare ligands from SMILES using Meeko for docking studies
 - **Binding affinity calculation**: Dock ligands to proteins using AutoDock Vina with parallel processing
-- **Multi-objective Bayesian optimization**: Optimize for simultaneous maximization of target binding affinity and selectivity over off-targets
+- **Multi-objective Bayesian optimisation**: Optimise for simultaneous maximisation of target binding affinity and selectivity over off-targets
 - **Results extraction**: Parse binding affinities from Vina output
 
 ## Project Structure
@@ -25,7 +25,7 @@ This repository provides a complete workflow for computational drug discovery:
 │   ├── ligand_preparation.py        # Molecular structure preparation via Meeko
 │   ├── protein_preparation.py       # Protein structure preparation via Meeko
 │   ├── vina_binding.py              # Binding affinity calculations with AutoDock Vina
-│   ├── bo.py                        # Multi-objective Bayesian optimization loop
+│   ├── bo.py                        # Multi-objective Bayesian optimisation loop
 │   ├── data_extraction.py           # Parse results from Vina output
 │   └── utils/
 │       └── config.py                # YAML configuration utilities
@@ -35,7 +35,7 @@ This repository provides a complete workflow for computational drug discovery:
 │   ├── prepared_ligands/            # Meeko-prepared ligand PDBQT files
 │   └── analogue_sets/               # Generated analogue CSV files
 ├── configs/
-│   ├── analogue_generator.yaml      # Configuration for analogue generation
+│   ├── bo_optimisation.yaml         # Bayesian optimisation configuration
 │   ├── pap_analogues.yaml           # PAP derivatives configuration
 │   ├── protein_configs/             # Target and off-target protein configs
 │   └── vina_binding.yaml            # AutoDock Vina simulation parameters
@@ -174,9 +174,9 @@ python src/vina_binding.py
 - Path to protein config YAML file
 - Path to ligand PDBQT file OR SMILES string of ligand
 
-### 5. Multi-Objective Bayesian Optimization
+### 5. Multi-Objective Bayesian Optimisation
 
-Optimize compounds for simultaneous **target binding affinity** and **selectivity** against off-targets using Bayesian optimization with Gaussian Process surrogates and Expected Improvement acquisition functions.
+Optimise compounds for simultaneous **target binding affinity** and **selectivity** against off-targets using Bayesian optimisation with Gaussian Process surrogates and Expected Improvement acquisition functions.
 
 **How it works:**
 1. **Initial sampling**: MaxMin algorithm selects diverse initial compounds from a pool based on Tanimoto similarity
@@ -188,58 +188,41 @@ Optimize compounds for simultaneous **target binding affinity** and **selectivit
 4. **Acquisition function**: Balances Expected Improvement with Tanimoto similarity penalty to encorage analogue exploration.
 5. **Iterative refinement**: Selects new batches of candidates until evaluation budget is exhausted
 
-**Configuration files required:**
-
-Target protein config (`configs/target_protein.yaml`):
-```yaml
-receptor: "data/prepared_proteins/target_clean.pdbqt"
-center: [31.2, 33.5, 28.8]  # Binding pocket center
-size: [20, 20, 20]           # Search box dimensions
-```
-
-Off-target protein configs (`configs/offtarget_1.yaml`, etc.):
-```yaml
-receptor: "data/prepared_proteins/offtarget_clean.pdbqt"
-center: [30.0, 32.0, 29.0]
-size: [20, 20, 20]
-```
-
-Vina parameters (`configs/vina_binding.yaml`):
-```yaml
-simulation_parameters:
-  cpu: 4
-  exhaustiveness: 8
-  ...
-```
-
 **Usage:**
 
-```python
-from src.bo import BayesianOptimizer
+Set up `configs/bo_optimisation.yaml` with your protein configurations:
 
-optimizer = BayesianOptimizer(
-    protein_configs=[
-        "configs/target_protein.yaml",
-        "configs/offtarget_1.yaml",
-        "configs/offtarget_2.yaml"
-    ],
-    vina_config="configs/vina_binding.yaml"
-)
+```yaml
+proteins:
+  target: configs/protein_configs/target_protein.yaml
+  off_targets:
+    - configs/protein_configs/offtarget_1.yaml
+    - configs/protein_configs/offtarget_2.yaml
 
-results = optimizer.run_optimization_loop(
-    initial_smiles_file="data/analogue_sets/compounds.csv",
-    initial_sample_size=5,
-    total_budget=50,
-    batch_size=5
-)
+input:
+  smiles_csv: data/analogue_sets/compounds.csv
 
-print(results.head())
-results.to_csv("bo_results.csv", index=False)
+optimisation:
+  total_budget: 100           # Total ligands to evaluate
+  initial_sample_size: 20    # Initial compounds from MaxMin sampling
+  batch_size: 10             # Compounds selected per BO iteration
+  target_weight: 0.5         # Weight for target binding affinity
+  selectivity_weight: 0.5    # Weight for selectivity
+
+output:
+  results_csv: bo_results.csv
+  save_pdbqt: false
+```
+
+Then run:
+
+```bash
+python src/bo.py configs/bo_optimisation.yaml
 ```
 
 **Output:**
 - CSV with ranked compounds sorted by composite score
-- Columns: `smiles`, `batch`, `target_affinity`, `selectivity`, `composite_score`
+- Columns: `smiles`, `iteration`, `target_affinity`, `selectivity`, `composite_score`
 
 ## Testing
 
@@ -255,7 +238,7 @@ Run specific test module:
 pytest tests/test_analogue_generation.py -v
 ```
 
-## Citation
+## References
 
 > Inspiration for analogue generation: _Potent and selective inhibitors of the Abl-kinase: phenylamino-pyrimidine (PAP) derivatives_, J. Zimmermann _et al_., 1997, DOI: 10.1016/S0960-894X(96)00601-4
 
@@ -266,7 +249,7 @@ pytest tests/test_analogue_generation.py -v
 ✅ **Implemented:**
 - Analogue generation, ligand & protein preparation
 - Parallel docking with AutoDock Vina
-- Multi-objective Bayesian optimization
+- Multi-objective Bayesian optimisation
 - Comprehensive test suite
 
 🔮 **Future:**
