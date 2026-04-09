@@ -132,13 +132,17 @@ class VinaCalculator:
                 "stdout": e.stdout
             }
     
-    def calculate_binding(self, ligand_pdbqt_path: str, name: str = "ligand") -> Dict:
+    def calculate_binding(self, 
+                          ligand_pdbqt_path: str, 
+                          name: str = "ligand",
+                          save_pdbqt: bool = False) -> Dict:
         """
         Calculate binding affinity for a ligand PDBQT file.
         
         Args:
             ligand_pdbqt_path: Path to the ligand PDBQT file
             name: Name for the ligand
+            save_pdbqt: Whether to save the output PDBQT file to disk
             
         Returns:
             Dictionary containing docking results with keys:
@@ -146,7 +150,7 @@ class VinaCalculator:
                 - name: Ligand name
                 - affinity: Best binding affinity (kcal/mol)
                 - affinity_range: Tuple of (worst, best) affinities
-                - output_pdbqt: Path to output PDBQT file
+                - output_pdbqt: Path to output PDBQT file (only if save_pdbqt=True)
                 - message: Status message
         """
         ligand_pdbqt_path = Path(ligand_pdbqt_path)
@@ -199,6 +203,13 @@ class VinaCalculator:
             }
             
             logger.info(f"Binding affinity for {name}: {affinity:.2f} kcal/mol")
+
+            if not save_pdbqt:
+                # Remove PDBQT from results and delete file from disk if not saving
+                results.pop("output_pdbqt", None)
+                output_pdbqt_path = Path(output_pdbqt)
+                output_pdbqt_path.unlink(missing_ok=True)
+
             return results
             
         except Exception as e:
