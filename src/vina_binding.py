@@ -9,6 +9,16 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+
+# Try to import Vina Python API for Linux/macOS
+if platform.system() != "Windows":
+    try:
+        from vina import Vina
+        VINA_API_AVAILABLE = True
+    except ImportError:
+        VINA_API_AVAILABLE = False
+else:
+    VINA_API_AVAILABLE = False
 from typing import Optional, Dict, Tuple
 from multiprocessing import Pool, cpu_count, freeze_support
 import logging
@@ -83,7 +93,7 @@ class VinaCalculator:
     
     def run_docking(self, ligand_pdbqt: str, output_pdbqt: str) -> Dict:
         """
-        Run Vina docking using command-line interface.
+        Run Vina docking using command-line on Windows or Python API on Linux/macOS.
         
         Args:
             ligand_pdbqt: Path to ligand PDBQT file
@@ -92,7 +102,17 @@ class VinaCalculator:
         Returns:
             Dictionary with docking results including affinity and success status
         """
-        # Build vina command
+        if platform.system() == "Windows":
+            return self._run_docking_cli(ligand_pdbqt, output_pdbqt)
+        else:
+            # Linux/macOS: use Python API
+            if VINA_API_AVAILABLE:
+                return self._run_docking_api(ligand_pdbqt, output_pdbqt)
+            else:
+                return self._run_docking_cli(ligand_pdbqt, output_pdbqt)
+    
+    def _run_docking_cli(self, ligand_pdbqt: str, output_pdbqt: str) -> Dict:
+        """Run Vina using command-line interface (Windows or installed vina command)."""
         cmd = [
             self._get_vina_executable(),
             "--receptor", self.protein_pdbqt,
@@ -130,6 +150,32 @@ class VinaCalculator:
                 "output_pdbqt": None,
                 "error": e.stderr,
                 "stdout": e.stdout
+            }
+    
+    def _run_docking_api(self, ligand_pdbqt: str, output_pdbqt: str) -> Dict:
+        """Run Vina using Python API (Linux/macOS)."""
+        try:
+            v = Vina(sf_name='vina', seed=self.random_seed, verbosity=self.verbosity)
+            v.set_receptor(self.protein_pdbqt)
+            v.set_ligand_from_file(ligand_pdbqt)
+            v.compute_vina_maps(center=self.center, box_size=self.size)
+            v.dock(exhaustiveness=self.exhaustiveness, n_poses=self.num_modes)
+            v.write_poses(output_pdbqt, n_poses=self.num_modes, overwrite=True)
+            
+            logger.info(f"Vina docking completed successfully (via API)")
+            return {
+                "success": True,
+                "output_pdbqt": output_pdbqt,
+                "stdout": "",
+                "stderr": ""
+            }
+        except Exception as e:
+            logger.error(f"Vina docking failed: {e}")
+            return {
+                "success": False,
+                "output_pdbqt": None,
+                "error": str(e),
+                "stdout": ""
             }
     
     def calculate_binding(self, 
@@ -223,20 +269,30 @@ class VinaCalculator:
     
     def _get_vina_executable(self) -> str:
         """
-        Get the path to the Vina executable.
-        On Windows: looks for vina.exe relative to repo root.
-        On Unix: uses 'vina' command from PATH.
+        Get the path to the Vina executable (only for CLI, not Python API).
+        On Windows: looks for vina.exe in repo root.
+        On Unix: looks for 'vina' in PATH.
         """
-        if platform.system().lower().startswith("win"):
+        import shutil
+        
+        if platform.system() == "Windows":
             # Windows: look for vina.exe in repo root
             repo_root = Path(__file__).resolve().parents[1]
             vina_exe = repo_root / "vina.exe"
             if vina_exe.exists():
                 return str(vina_exe)
-            raise FileNotFoundError(f"vina.exe not found at {vina_exe}")
+            raise FileNotFoundError(
+                f"Vina executable not found at {vina_exe}\n"
+                f"Expected: {repo_root}/vina.exe"
+            )
         else:
-            # Unix: use 'vina' from PATH
-            return "vina"
+            # Unix: look for 'vina' in PATH
+            vina_path = shutil.which("vina")
+            if vina_path:
+                return vina_path
+            raise FileNotFoundError(
+                "Vina not found in PATH. Install with: conda install -c conda-forge autodock-vina"
+            )
     
     def _extract_top_affinity(self, pdbqt_path: str) -> Optional[float]:
         """Extract the best (top) binding affinity from Vina output PDBQT."""

@@ -7,6 +7,7 @@ import sys
 import logging
 from pathlib import Path
 from typing import Dict, Tuple, List, Optional
+from multiprocessing import Pool, cpu_count
 import numpy as np
 import pandas as pd
 import csv
@@ -116,6 +117,74 @@ def maxmin_sampler(smiles: List[str], sample_size: int) -> np.ndarray:
     return smiles_array[np.array(sample_indices, dtype=int)]
 
 
+def _evaluate_ligand_worker(smiles: str, ligand_name: str, target_calc: VinaCalculator, offtarget_calcs: List[VinaCalculator], target_weight: float, selectivity_weight: float, iteration_index: int = 0, save_pdbqt: bool = False) -> Dict:
+    """
+    Worker function for parallel ligand evaluation.
+    Static function to enable multiprocessing serialization.
+    
+    Args:
+        smiles: SMILES string
+        ligand_name: Ligand name
+        target_calc: Target VinaCalculator
+        offtarget_calcs: List of off-target VinaCalculators
+        target_weight: Weight for target in composite score
+        selectivity_weight: Weight for selectivity in composite score
+        iteration_index: BO iteration index
+        save_pdbqt: Whether to save PDBQT files
+        
+    Returns:
+        Results dictionary
+    """
+    try:
+        logger.info(f"Evaluating {ligand_name}...")
+        
+        # Prepare ligand
+        pdbqt_path = prepare_ligand(smiles, name=ligand_name, output_dir="data/prepared_ligands")
+        
+        # Target docking
+        target_result = target_calc.calculate_binding(pdbqt_path, name=ligand_name, save_pdbqt=save_pdbqt)
+        if not target_result["success"]:
+            logger.warning(f"Target binding failed for {ligand_name}")
+            return {"success": False}
+        
+        target_affinity = target_result["affinity"]
+        
+        # Off-target docking
+        offtarget_affinities = []
+        for i, calc in enumerate(offtarget_calcs):
+            result = calc.calculate_binding(pdbqt_path, name=f"{ligand_name}_offtarget_{i}")
+            if result["success"] and result["affinity"] is not None:
+                offtarget_affinities.append(result["affinity"])
+        
+        if len(offtarget_affinities) == 0:
+            logger.warning(f"No off-target results for {ligand_name}")
+            return {"success": False}
+        
+        # Calculate scores
+        mean_offtarget = np.mean(offtarget_affinities)
+        selectivity = mean_offtarget - target_affinity
+        composite_score = target_weight * (-target_affinity) + selectivity_weight * selectivity
+        
+        logger.info(
+            f"  Target affinity: {target_affinity:.2f} kcal/mol | "
+            f"Selectivity: {selectivity:.2f} | "
+            f"Composite: {composite_score:.2f}"
+        )
+        
+        return {
+            "success": True,
+            "smiles": smiles,
+            "target_affinity": target_affinity,
+            "selectivity": selectivity,
+            "composite_score": composite_score,
+            "iteration_index": iteration_index,
+        }
+    
+    except Exception as e:
+        logger.error(f"Error evaluating {ligand_name}: {e}")
+        return {"success": False}
+
+
 class BayesianOptimizer:
     """Multi-objective Bayesian optimization for selective binding"""
     
@@ -201,9 +270,28 @@ class BayesianOptimizer:
         """
         return self.target_weight * (-target_affinity) + self.selectivity_weight * selectivity
     
+    def _dock_offtargets_batch(self, pdbqt_path: str, ligand_name: str) -> List[float]:
+        """
+        Dock ligand to all off-targets sequentially (for non-parallel evaluation).
+        
+        Args:
+            pdbqt_path: Path to prepared ligand PDBQT
+            ligand_name: Ligand name for logging
+            
+        Returns:
+            List of off-target binding affinities
+        """
+        offtarget_affinities = []
+        for i, calc in enumerate(self.offtarget_calcs):
+            result = calc.calculate_binding(pdbqt_path, name=f"{ligand_name}_offtarget_{i}")
+            if result["success"] and result["affinity"] is not None:
+                offtarget_affinities.append(result["affinity"])
+        return offtarget_affinities
+    
     def evaluate_ligand(self, smiles: str, ligand_name: str = "ligand", iteration_index: int = 0, save_pdbqt: bool = False) -> Dict:
         """
-        Evaluate a single ligand.
+        Evaluate a single ligand sequentially (without parallelization).
+        For parallel batch evaluation, use evaluate_batch() instead.
         
         Args:
             smiles: SMILES string
@@ -228,14 +316,8 @@ class BayesianOptimizer:
             
             target_affinity = target_result["affinity"]
             
-            # Off-target docking for selectivity
-            offtarget_affinities = []
-            for i, calc in enumerate(self.offtarget_calcs):
-                result = calc.calculate_binding(
-                    pdbqt_path, name=f"{ligand_name}_offtarget_{i}"
-                )
-                if result["success"] and result["affinity"] is not None:
-                    offtarget_affinities.append(result["affinity"])
+            # Off-target docking sequentially
+            offtarget_affinities = self._dock_offtargets_batch(pdbqt_path, ligand_name)
             
             if len(offtarget_affinities) == 0:
                 logger.warning(f"No off-target results for {ligand_name}")
@@ -245,7 +327,7 @@ class BayesianOptimizer:
             selectivity = self.calculate_selectivity(target_affinity, offtarget_affinities)
             composite_score = self.calculate_composite_score(target_affinity, selectivity)
             
-            # Store
+            # Store results
             self.smiles_list.append(smiles)
             self.target_affinities.append(target_affinity)
             self.selectivity_scores.append(selectivity)
@@ -270,16 +352,55 @@ class BayesianOptimizer:
             logger.error(f"Error evaluating {ligand_name}: {e}")
             return {"success": False}
     
-    def evaluate_batch(self, smiles_list: List[str], iteration_index: int = 0, save_pdbqt: bool = False) -> None:
-        """Evaluate a batch of SMILES
+    def evaluate_batch(self, smiles_list: List[str], iteration_index: int = 0, save_pdbqt: bool = False, n_processes: Optional[int] = None) -> None:
+        """
+        Evaluate a batch of SMILES in parallel using multiprocessing.
         
         Args:
             smiles_list: List of SMILES to evaluate
             iteration_index: Which BO iteration this batch is from
             save_pdbqt: Whether to save the output PDBQT files
+            n_processes: Number of processes (default: use all available CPUs - 1)
         """
-        for i, smiles in enumerate(smiles_list):
-            self.evaluate_ligand(smiles, ligand_name=f"ligand_{len(self.smiles_list)}", iteration_index=iteration_index, save_pdbqt=save_pdbqt)
+        if not smiles_list:
+            return
+        
+        if n_processes is None:
+            n_processes = max(1, cpu_count() - 1)
+        
+        logger.info(f"Evaluating batch of {len(smiles_list)} ligands using {n_processes} processes")
+        
+        # Create argument tuples for starmap
+        eval_args = [
+            (
+                smiles,
+                f"ligand_{len(self.smiles_list) + i}",
+                self.target_calc,
+                self.offtarget_calcs,
+                self.target_weight,
+                self.selectivity_weight,
+                iteration_index,
+                save_pdbqt
+            )
+            for i, smiles in enumerate(smiles_list)
+        ]
+        
+        # Evaluate in parallel
+        with Pool(processes=n_processes) as pool:
+            results = pool.starmap(_evaluate_ligand_worker, eval_args)
+        
+        # Update optimizer state with results
+        successful_count = 0
+        for result in results:
+            if result.get("success"):
+                self.smiles_list.append(result["smiles"])
+                self.target_affinities.append(result["target_affinity"])
+                self.selectivity_scores.append(result["selectivity"])
+                self.composite_scores.append(result["composite_score"])
+                self.iteration_indices.append(result["iteration_index"])
+                successful_count += 1
+        
+        logger.info(f"Batch evaluation complete: {successful_count}/{len(smiles_list)} ligands evaluated successfully")
     
     def fit_gpr_models(self) -> Tuple[gpytorch.models.ExactGP, gpytorch.models.ExactGP]:
         """
@@ -613,7 +734,7 @@ class BayesianOptimizer:
         return df.sort_values("composite_score", ascending=False).reset_index(drop=True)
 
 
-def main(config_file: str = "configs/bo_optimization.yaml"):
+def main(config_file: str = "configs/bo_optimisation.yaml"):
     """
     Run BO optimization from configuration file.
     
