@@ -150,21 +150,22 @@ class TestSelectivityCalculation:
     """Test selectivity score calculation."""
     
     def test_selectivity_basic(self):
-        """Test basic selectivity calculation."""
+        """Test basic selectivity calculation using p-norm (p=5)."""
         protein_configs = ["config1", "config2"]
         
         with patch("src.bo.load_config"):
             with patch("src.bo.VinaCalculator"):
                 optimizer = BayesianOptimizer(protein_configs=protein_configs)
                 
-                # Strong target (-8.0), weak off-targets (-5.0)
+                # Strong target (-8.0), weak off-targets (-5.0, -6.0)
+                # Uses p-norm: abs_target - (mean(abs_affinities^5))^(1/5)
+        
                 selectivity = optimizer.calculate_selectivity(
                     target_affinity=-8.0,
                     offtarget_affinities=[-5.0, -6.0]
                 )
                 
-                # selectivity = mean_offtarget - target = (-5.5) - (-8.0) = 2.5
-                assert selectivity == pytest.approx(2.5)
+                assert selectivity == pytest.approx(2.412, abs=0.001)
     
     def test_selectivity_empty_offtargets(self):
         """Test selectivity with no off-targets."""

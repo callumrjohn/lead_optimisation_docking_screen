@@ -253,8 +253,11 @@ class BayesianOptimizer:
         if len(offtarget_affinities) == 0:
             return 0.0
         
-        mean_offtarget = np.mean(offtarget_affinities)
-        selectivity = mean_offtarget - target_affinity  # Weak off-target - strong target = high selectivity
+        offtarget_affinities = np.asarray(offtarget_affinities)
+        abs_offtarget = np.abs(offtarget_affinities)
+        norm_offtarget = np.mean(abs_offtarget**5) ** (1/5)
+        abs_target = np.abs(target_affinity)
+        selectivity = abs_target - norm_offtarget
         return selectivity
     
     def calculate_composite_score(self, target_affinity: float, selectivity: float) -> float:
@@ -266,7 +269,7 @@ class BayesianOptimizer:
             selectivity: Selectivity score
             
         Returns:
-            Composite score = 0.5 * (-affinity) + 0.5 * selectivity
+            Composite score = target_weight * (-affinity) + selectivity_weight * selectivity
         """
         return self.target_weight * (-target_affinity) + self.selectivity_weight * selectivity
     
