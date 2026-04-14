@@ -270,6 +270,7 @@ class BayesianOptimizer:
             
         Returns:
             Composite score = target_weight * (-affinity) + selectivity_weight * selectivity
+            Composite score = target_weight * (-affinity) + selectivity_weight * selectivity
         """
         return self.target_weight * (-target_affinity) + self.selectivity_weight * selectivity
     
