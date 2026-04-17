@@ -31,10 +31,14 @@ class BayesianOptimizer(Screener):
         vina_config: str = "configs/vina_binding.yaml",
         target_weight: float = 0.5,
         selectivity_weight: float = 0.5,
+        ei_weight: float = 0.7,
+        diversity_weight: float = 0.3,
     ):
         """Initialize BO optimizer (inherits from Screener base class)"""
         super().__init__(protein_configs, vina_config, target_weight, selectivity_weight)
-        logger.info(f"Initialized BO with 1 target + {len(self.offtarget_calcs)} off-targets")
+        self.ei_weight = ei_weight
+        self.diversity_weight = diversity_weight
+        logger.info(f"Initialized BO with 1 target + {len(self.offtarget_calcs)} off-targets (EI weight={ei_weight}, diversity weight={diversity_weight})")
     
     def fit_gpr_models(self) -> Tuple[gpytorch.models.ExactGP, gpytorch.models.ExactGP]:
         """
@@ -347,8 +351,8 @@ class BayesianOptimizer(Screener):
                     batch_size=batch_size,
                     ei_target_weight=target_weight,
                     ei_selectivity_weight=selectivity_weight,
-                    ei_weight=0.7,
-                    diversity_weight=0.3,
+                    ei_weight=self.ei_weight,
+                    diversity_weight=self.diversity_weight,
                 )
                 logger.info(f"Selected batch: {next_batch}")
             except Exception as e:
