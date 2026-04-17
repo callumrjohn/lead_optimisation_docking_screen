@@ -21,32 +21,49 @@ This repository provides a complete workflow for computational drug discovery:
 
 ```
 ├── src/
-│   ├── analogue_generation.py       # Scaffold-based compound generation
-│   ├── ligand_preparation.py        # Molecular structure preparation via Meeko
-│   ├── protein_preparation.py       # Protein structure preparation via Meeko
-│   ├── vina_binding.py              # Binding affinity calculations with AutoDock Vina
-│   ├── bo.py                        # Multi-objective Bayesian optimisation loop
-│   ├── data_extraction.py           # Parse results from Vina output
+│   ├── analogue_generation.py            # Scaffold-based compound generation
+│   ├── ligand_preparation.py             # Molecular structure preparation via Meeko
+│   ├── protein_preparation.py            # Protein structure preparation via Meeko
+│   ├── vina_binding.py                   # Binding affinity calculations with AutoDock Vina
+│   ├── data_extraction.py                # Parse results from Vina output
+│   ├── screening.py                      # Unified screening dispatcher (config-driven: bo/random/full)
+│   ├── screening_architectures/          # Modular screening strategies package
+│   │   ├── __init__.py                   # API exports: Screener, BayesianOptimizer, RandomScreener, FullScreener
+│   │   ├── base_class.py                 # Base Screener class, FP generation, MaxMin sampling, ligand evaluation
+│   │   ├── bo_class.py                   # BayesianOptimizer: GP surrogates + Expected Improvement
+│   │   ├── random_class.py               # RandomScreener: random baseline
+│   │   └── fullscreen_class.py           # FullScreener: exhaustive screening
 │   └── utils/
-│       └── config.py                # YAML configuration utilities
+│       └── config.py                     # YAML configuration utilities
 ├── data/
-│   ├── protein_structures/          # Input protein PDB files
-│   ├── prepared_proteins/           # Meeko-prepared protein PDBQT structures
-│   ├── prepared_ligands/            # Meeko-prepared ligand PDBQT files
-│   └── analogue_sets/               # Generated analogue CSV files
+│   ├── protein_structures/               # Input protein PDB files
+│   ├── prepared_proteins/                # Meeko-prepared protein PDBQT structures
+│   ├── prepared_ligands/                 # Meeko-prepared ligand PDBQT files
+│   └── analogue_sets/                    # Generated analogue CSV files
 ├── configs/
-│   ├── bo_optimisation.yaml         # Bayesian optimisation configuration
-│   ├── pap_analogues.yaml           # PAP derivatives configuration
-│   ├── protein_configs/             # Target and off-target protein configs
-│   └── vina_binding.yaml            # AutoDock Vina simulation parameters
+│   ├── screening.yaml                    # Unified screening configuration (method: bo|random|full)
+│   ├── protein_configs/                  # Target and off-target protein configs
+│   └── vina_binding.yaml                 # AutoDock Vina simulation parameters
 ├── tests/
-│   ├── test_analogue_generation.py
-│   ├── test_ligand_preparation.py
-│   ├── test_bo.py
-│   └── conftest.py
-├── environment.yml                  # Conda environment specification
+│   ├── test_analogue_generation.py       # Tests for analogue generation
+│   ├── test_ligand_preparation.py        # Tests for ligand prep
+│   ├── test_screening.py                 # Tests for screening strategies
+│   └── conftest.py                       # pytest fixtures and mocks
+├── environment.yml                       # Conda environment specification
+├── pytest.ini                            # pytest configuration
 └── README.md
 ```
+
+**Key Architecture Details:**
+
+- **screening.py**: Lightweight dispatcher that reads configuration file and dispatches to the appropriate screening strategy (BayesianOptimizer, RandomScreener, or FullScreener)
+- **screening_architectures/**: Package containing focused modules:
+  - **base_class.py**: `Screener` base class with shared functionality (fingerprint generation, MaxMin sampling, parallel ligand evaluation, result formatting)
+  - **bo_class.py**: `BayesianOptimizer` – multi-objective Bayesian optimization with Gaussian Process models and Expected Improvement acquisition
+  - **random_class.py**: `RandomScreener` – random sampling baseline
+  - **fullscreen_class.py**: `FullScreener` – exhaustive screening of entire pool
+- All strategies inherit from `Screener` base class, eliminating code duplication
+- Config-driven method selection: Set `method: bo` / `method: random` / `method: full` in screening.yaml
 
 ## Installation
 
@@ -174,7 +191,11 @@ python src/vina_binding.py
 - Path to protein config YAML file
 - Path to ligand PDBQT file OR SMILES string of ligand
 
-### 5. Multi-Objective Bayesian Optimisation
+### 5. Ligand Screening
+
+The screening module provides a unified interface for multiple screening strategies, configured via YAML. Select your preferred method (Bayesian Optimization, Random Sampling, or Exhaustive) by setting the `method` parameter in the config file.
+
+#### 5a. Multi-Objective Bayesian Optimisation
 
 Optimise compounds for simultaneous **target binding affinity** and **selectivity** against off-targets using Bayesian optimisation with Gaussian Process surrogates and Expected Improvement acquisition functions.
 
@@ -185,14 +206,16 @@ Optimise compounds for simultaneous **target binding affinity** and **selectivit
    - Selectivity score = mean(off-target affinities) - target affinity (higher selectivity = weaker off-target binding)
    - Composite objective = 0.5 × target + 0.5 × selectivity
 3. **Surrogate models**: Fits separate GP models with Tanimoto kernels for target and selectivity
-4. **Acquisition function**: Balances Expected Improvement with Tanimoto similarity penalty to encorage analogue exploration.
+4. **Acquisition function**: Balances Expected Improvement with Tanimoto similarity penalty to encourage analogue exploration
 5. **Iterative refinement**: Selects new batches of candidates until evaluation budget is exhausted
 
 **Usage:**
 
-Set up `configs/bo_optimisation.yaml` with your protein configurations:
+Set up `configs/screening.yaml` with your screening configuration:
 
 ```yaml
+method: bo                      # Screening strategy: bo | random | full
+
 proteins:
   target: configs/protein_configs/target_protein.yaml
   off_targets:
@@ -202,12 +225,13 @@ proteins:
 input:
   smiles_csv: data/analogue_sets/compounds.csv
 
-optimisation:
-  total_budget: 100           # Total ligands to evaluate
-  initial_sample_size: 20    # Initial compounds from MaxMin sampling
-  batch_size: 10             # Compounds selected per BO iteration
+screening:
+  batch_size: 10             # Compounds selected per batch
   target_weight: 0.5         # Weight for target binding affinity
   selectivity_weight: 0.5    # Weight for selectivity
+  # BO-specific parameters
+  initial_sample_size: 20    # Initial compounds from MaxMin sampling
+  total_budget: 100          # Total ligands to evaluate
 
 output:
   results_csv: bo_results.csv
@@ -217,12 +241,42 @@ output:
 Then run:
 
 ```bash
-python src/bo.py configs/bo_optimisation.yaml
+python src/screening.py configs/screening.yaml
 ```
 
 **Output:**
 - CSV with ranked compounds sorted by composite score
 - Columns: `smiles`, `iteration`, `target_affinity`, `selectivity`, `composite_score`
+
+#### 5b. Random Screening
+
+To use random sampling instead of Bayesian optimization, modify your config:
+
+```yaml
+method: random
+
+screening:
+  batch_size: 10
+  total_budget: 100          # Total ligands to evaluate
+  random_seed: 42            # For reproducibility
+  target_weight: 0.5
+  selectivity_weight: 0.5
+```
+
+#### 5c. Exhaustive Screening
+
+To screen all available compounds:
+
+```yaml
+method: full
+
+screening:
+  batch_size: 10
+  target_weight: 0.5
+  selectivity_weight: 0.5
+```
+
+All three methods use the same interface and produce identical output formats, differing only in their selection strategy.
 
 ## Testing
 
@@ -243,15 +297,4 @@ pytest tests/test_analogue_generation.py -v
 > Inspiration for analogue generation: _Potent and selective inhibitors of the Abl-kinase: phenylamino-pyrimidine (PAP) derivatives_, J. Zimmermann _et al_., 1997, DOI: 10.1016/S0960-894X(96)00601-4
 
 > Protein crystal structure: _*8UAK*_: _Crystal structure of the catalytic domain of human PKC alpha (D463N, V568I, S657E) in complex with Darovasertib (NVP-LXS196) at 2.82-A resolution_, *PDB DOI*: 10.2210/pdb8UAK/pdb, *Publication DOI*: 10.1021/acs.jmedchem.3c02002
-
-## Status
-
-✅ **Implemented:**
-- Analogue generation, ligand & protein preparation
-- Parallel docking with AutoDock Vina
-- Multi-objective Bayesian optimisation
-- Comprehensive test suite
-
-🔮 **Future:**
-- End-to-end pipeline automation
 
