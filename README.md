@@ -100,20 +100,23 @@ Configure analogues in a YAML file (e.g., `configs/pap_analogues.yaml`):
 
 ```yaml
 set_name: "pap_derivatives"
-scaffold_smiles: "O=C([*:6])Nc1cc(Nc2nccc([*:4])n2)c([*:5])cc1"
+scaffold_smiles: "O=C([*:3])Nc1cc(Nc2nccc([*:1])n2)c([*:2])cc1"
 
 substituents:
   1:
-    "phenyl": "[*:1]c1ccccc1"
-    "2-pyridyl": "[*:1]c1ccccn1"
+    "hydrogen": "[*:4]"
+    "phenyl": "[*:4]c1ccccc1"
+    "2-pyridyl": "[*:4]c1ccccn1"
   2:
-    "methyl": "[*:2]C"
-    "chloro": "[*:2]Cl"
-    "fluoro": "[*:2]F"
+    "hydrogen": "[*:5]"
+    "methyl": "[*:5]C"
+    "chloro": "[*:5]Cl"
+    "fluoro": "[*:5]F"
   3:
-    "phenyl": "[*:3]c1ccccc1"
+    "hydrogen": "[*:6]"
+    "phenyl": "[*:6]c1ccccc1"
 
-dummy_index_pairs:
+dummy_index_pairs: # For each dummy pair, the scaffold map number must be the first value
   - [1, 4]
   - [2, 5]
   - [3, 6]
